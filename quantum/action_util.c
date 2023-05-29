@@ -46,12 +46,6 @@ static uint8_t oneshot_locked_mods = 0;
 uint8_t        get_oneshot_locked_mods(void) {
     return oneshot_locked_mods;
 }
-void add_oneshot_locked_mods(uint8_t mods) {
-    if ((oneshot_locked_mods & mods) != mods) {
-        oneshot_locked_mods |= mods;
-        oneshot_locked_mods_changed_kb(oneshot_locked_mods);
-    }
-}
 void set_oneshot_locked_mods(uint8_t mods) {
     if (mods != oneshot_locked_mods) {
         oneshot_locked_mods = mods;
@@ -61,12 +55,6 @@ void set_oneshot_locked_mods(uint8_t mods) {
 void clear_oneshot_locked_mods(void) {
     if (oneshot_locked_mods) {
         oneshot_locked_mods = 0;
-        oneshot_locked_mods_changed_kb(oneshot_locked_mods);
-    }
-}
-void del_oneshot_locked_mods(uint8_t mods) {
-    if (oneshot_locked_mods & mods) {
-        oneshot_locked_mods &= ~mods;
         oneshot_locked_mods_changed_kb(oneshot_locked_mods);
     }
 }
@@ -84,19 +72,43 @@ bool has_oneshot_mods_timed_out(void) {
 
 /* oneshot layer */
 #ifndef NO_ACTION_ONESHOT
-/** \brief oneshot_layer_data bits
+/** \brief oneshot_layer_array data bits
  * LLLL LSSS
  * where:
  *   L => are layer bits
  *   S => oneshot state bits
  */
-static uint8_t oneshot_layer_data = 0;
 
-inline uint8_t get_oneshot_layer(void) {
-    return oneshot_layer_data >> 3;
+#define ONESHOT_LAYER_ARRAY_SIZE 4
+static int8_t oneshot_layer_array[ONESHOT_LAYER_ARRAY_SIZE] = {0};
+static uint8_t oneshot_layer_array_count = 0;
+
+void _push_oneshot_layer_array(uint8_t layer, uint8_t state) {
+    if(oneshot_layer_array_count < ONESHOT_LAYER_ARRAY_SIZE) {
+        oneshot_layer_array[oneshot_layer_array_count++] = layer << 3 | state;
+    } else {
+        // ignore it if exceeds size
+    }
 }
-inline uint8_t get_oneshot_layer_state(void) {
-    return oneshot_layer_data & 0b111;
+
+void _pop_oneshot_layer_array(void) {
+    if(oneshot_layer_array_count > 0) {
+        oneshot_layer_array_count--;
+    } else {
+        // ignore if nothing there
+    }
+}
+
+uint8_t get_oneshot_layer(void) {
+    return oneshot_layer_array_count > 0 ?
+        oneshot_layer_array[oneshot_layer_array_count - 1] >> 3 :
+        0;
+}
+
+uint8_t get_oneshot_layer_state(void) {
+    return oneshot_layer_array_count > 0 ?
+        oneshot_layer_array[oneshot_layer_array_count - 1] & 0b111 :
+        0;
 }
 
 #    ifdef SWAP_HANDS_ENABLE
@@ -168,7 +180,7 @@ void clear_oneshot_swaphands(void) {
  */
 void set_oneshot_layer(uint8_t layer, uint8_t state) {
     if (keymap_config.oneshot_enable) {
-        oneshot_layer_data = layer << 3 | state;
+        _push_oneshot_layer_array(layer, state);
         layer_on(layer);
 #    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
         oneshot_layer_time = timer_read();
@@ -183,7 +195,7 @@ void set_oneshot_layer(uint8_t layer, uint8_t state) {
  * FIXME: needs doc
  */
 void reset_oneshot_layer(void) {
-    oneshot_layer_data = 0;
+    _pop_oneshot_layer_array();
 #    if (defined(ONESHOT_TIMEOUT) && (ONESHOT_TIMEOUT > 0))
     oneshot_layer_time = 0;
 #    endif
@@ -194,11 +206,14 @@ void reset_oneshot_layer(void) {
  * FIXME: needs doc
  */
 void clear_oneshot_layer_state(oneshot_fullfillment_t state) {
-    uint8_t start_state = oneshot_layer_data;
-    oneshot_layer_data &= ~state;
-    if ((!get_oneshot_layer_state() && start_state != oneshot_layer_data) && keymap_config.oneshot_enable) {
-        layer_off(get_oneshot_layer());
-        reset_oneshot_layer();
+    if(oneshot_layer_array_count > 0) {
+        int8_t *oneshot_layer_data = &oneshot_layer_array[oneshot_layer_array_count - 1];
+        uint8_t start_state = *oneshot_layer_data;
+        *oneshot_layer_data &= ~state;
+        if ((!get_oneshot_layer_state() && start_state != *oneshot_layer_data) && keymap_config.oneshot_enable) {
+            layer_off(get_oneshot_layer());
+            reset_oneshot_layer();
+        }
     }
 }
 /** \brief Is oneshot layer active
